@@ -1,5 +1,6 @@
 const std = @import("std");
-const Writer = std.fs.File.Writer;
+const Writer = std.io.Writer;
+const bufferedWriter = std.io.bufferedWriter;
 
 const c = @cImport({
     @cInclude("stdlib.h");
@@ -9,14 +10,12 @@ const c = @cImport({
 
 const STDIN_FILENO = std.os.linux.STDIN_FILENO;
 
-const GRID_WIDTH = 20;
-const GRID_HEIGHT = 10;
+const GRID_WIDTH = 50;
+const GRID_HEIGHT = 20;
 const MAX_LENGTH = GRID_WIDTH * GRID_HEIGHT;
 const WRAP = true;
 
-const fps = 2;
-
-const Dir = enum { DIR_UP, DIR_DOWN, DIR_LEFT, DIR_RIGHT };
+const d = enum { DIR_UP, DIR_DOWN, DIR_LEFT, DIR_RIGHT };
 
 const Point = struct {
     x: i32,
@@ -25,8 +24,10 @@ const Point = struct {
 
 const Player = struct {
     pos: Point,
-    direction: Dir,
-    last_direction: Dir,
+    direction: d,
+    last_direction: d,
+    speed: u32,
+    boost_left: u32,
 
     tail: [MAX_LENGTH]?Point,
 };
@@ -34,8 +35,9 @@ const Player = struct {
 const Game = struct {
     player: Player,
     food: ?Point,
+    boost: ?Point,
 
-    score: i32,
+    score: u32,
     paused: bool,
     quit: bool,
 };
@@ -60,9 +62,9 @@ fn enable_raw_mode() void {
     _ = c.tcsetattr(STDIN_FILENO, c.TCSAFLUSH, &raw);
 }
 
-fn istail(game: Game, x: i32, y: i32) bool {
+fn is_tail(game: Game, x: i32, y: i32) bool {
     var i: usize = 0;
-    while (i <= game.score) : (i += 1) {
+    while (i < game.score) : (i += 1) {
         if (game.player.tail[i]) |tail| {
             if (tail.x == x and tail.y == y)
                 return true;
@@ -71,8 +73,8 @@ fn istail(game: Game, x: i32, y: i32) bool {
     return false;
 }
 
-fn display(game: Game, out: Writer) !void {
-    try out.print("[score]: {} {s}\r\n", .{ game.score, if (game.paused)
+fn display(game: Game, writer: anytype) !void {
+    try writer.print("[score]: {} {s}\r\n", .{ game.score, if (game.paused)
         "(paused)"
     else
         "        " });
@@ -82,41 +84,50 @@ fn display(game: Game, out: Writer) !void {
         var x: i32 = 0;
         while (x < GRID_WIDTH) : (x += 1) {
             if (game.player.pos.x == x and game.player.pos.y == y) {
-                try out.print("#", .{});
-            } else if (istail(game, x, y)) {
-                try out.print("*", .{});
-            } else if (game.food) |food| {
-                if (food.x == x and food.y == y) {
-                    try out.print("@", .{});
+                try writer.print("\x1b[32m#\x1b[39m", .{});
+            } else if (is_tail(game, x, y)) {
+                try writer.print("\x1b[32m*\x1b[39m", .{});
+            } else if (game.food.?.x == x and game.food.?.y == y) {
+                try writer.print("\x1b[31m@\x1b[39m", .{});
+            } else if (game.boost) |boost| {
+                if (boost.x == x and boost.y == y) {
+                    try writer.print("\x1b[34mb\x1b[39m", .{});
                 } else {
-                    try out.print(".", .{});
+                    try writer.print(".", .{});
                 }
+            } else {
+                try writer.print(".", .{});
             }
         }
-        try out.print("\r\n", .{});
+        try writer.print("\r\n", .{});
     }
 }
 
-fn control(game: *Game, b: u8) void {
+fn control(game: *Game, b: u8, d_writer: anytype) !void {
     switch (b) {
         'w' => {
-            if (game.player.last_direction != Dir.DIR_DOWN)
-                game.player.direction = Dir.DIR_UP;
+            if (game.player.last_direction != d.DIR_DOWN)
+                game.player.direction = d.DIR_UP;
         },
         'a' => {
-            if (game.player.last_direction != Dir.DIR_RIGHT)
-                game.player.direction = Dir.DIR_LEFT;
+            if (game.player.last_direction != d.DIR_RIGHT)
+                game.player.direction = d.DIR_LEFT;
         },
         's' => {
-            if (game.player.last_direction != Dir.DIR_UP)
-                game.player.direction = Dir.DIR_DOWN;
+            if (game.player.last_direction != d.DIR_UP)
+                game.player.direction = d.DIR_DOWN;
         },
         'd' => {
-            if (game.player.last_direction != Dir.DIR_LEFT)
-                game.player.direction = Dir.DIR_RIGHT;
+            if (game.player.last_direction != d.DIR_LEFT)
+                game.player.direction = d.DIR_RIGHT;
+        },
+        'u' => {
+            game.score += 1;
         },
         'p' => {
             game.paused = !game.paused;
+            try reset_cursor(d_writer);
+            try display(game.*, d_writer);
         },
         'q' => {
             game.quit = true;
@@ -129,7 +140,7 @@ fn spawn_food(rand: std.rand.Random, game: *Game) void {
     var x: i32 = rand.intRangeLessThan(i32, 0, GRID_WIDTH);
     var y: i32 = rand.intRangeLessThan(i32, 0, GRID_HEIGHT);
 
-    if (!istail(game.*, x, y) or (game.player.pos.x == x and game.player.pos.y == y)) {
+    if (!is_tail(game.*, x, y) and (game.player.pos.x != x and game.player.pos.y != y)) {
         game.food = Point{
             .x = x,
             .y = y,
@@ -139,6 +150,21 @@ fn spawn_food(rand: std.rand.Random, game: *Game) void {
     }
 }
 
+fn spawn_boost(rand: std.rand.Random, game: *Game) void {
+    var x: i32 = rand.intRangeLessThan(i32, 0, GRID_WIDTH);
+    var y: i32 = rand.intRangeLessThan(i32, 0, GRID_HEIGHT);
+
+    if (!is_tail(game.*, x, y) and (game.player.pos.x != x and game.player.pos.y != y)) {
+        game.boost = Point{
+            .x = x,
+            .y = y,
+        };
+    } else {
+        spawn_boost(rand, game);
+    }
+}
+
+// This needs to remove tail that is above the score
 fn append_shift_right(arr: *[MAX_LENGTH]?Point, elem: Point) void {
     var i: usize = arr.len - 1;
     while (i > 0) : (i -= 1) {
@@ -162,26 +188,26 @@ fn wrap(game: *Game) void {
 
 fn check_loss(game: Game) bool {
     if (WRAP)
-        return istail(game, game.player.pos.x, game.player.pos.y);
+        return is_tail(game, game.player.pos.x, game.player.pos.y);
 
     return game.player.pos.x < 0 or game.player.pos.x > GRID_WIDTH - 1 or
         game.player.pos.y < 0 or game.player.pos.y > GRID_WIDTH - 1 or
-        istail(game, game.player.pos.x, game.player.pos.y);
+        is_tail(game, game.player.pos.x, game.player.pos.y);
 }
 
 fn check_win(game: Game) bool {
-    if (game.food) |food| {
-        return game.player.pos.x == food.x and game.player.pos.y == food.y and game.score == MAX_LENGTH - 2;
-    }
-    return false;
+    return game.player.pos.x == game.food.?.x and game.player.pos.y == game.food.?.y and game.score == MAX_LENGTH - 2;
 }
 
-fn reset_cursor(out: Writer) !void {
-    try out.print("\x1B[{}A\x1B[{}D", .{ GRID_HEIGHT + 1, GRID_WIDTH });
+fn reset_cursor(writer: anytype) !void {
+    try writer.print("\x1B[{}A\x1B[{}D", .{ GRID_HEIGHT + 1, GRID_WIDTH });
 }
 
 pub fn main() !void {
-    const stdout = std.io.getStdOut().writer();
+    const stdout = std.io.getStdOut();
+    var buf = std.io.bufferedWriter(stdout.writer());
+
+    var w = buf.writer();
 
     var prng = std.rand.DefaultPrng.init(blk: {
         var seed: u64 = undefined;
@@ -200,67 +226,97 @@ pub fn main() !void {
                 .y = GRID_HEIGHT / 2,
             },
             .tail = [_]?Point{null} ** MAX_LENGTH,
-            .direction = Dir.DIR_RIGHT,
-            .last_direction = Dir.DIR_LEFT,
+            .direction = d.DIR_RIGHT,
+            .last_direction = d.DIR_LEFT,
+            .speed = 150,
+            .boost_left = 0,
         },
         .food = null,
+        .boost = null,
         .score = 0,
         .paused = true,
         .quit = false,
     };
 
     spawn_food(rand, &game);
+    spawn_boost(rand, &game);
 
-    try display(game, stdout);
+    try display(game, w);
+    try buf.flush();
 
     var timer = try std.time.Timer.start();
 
     while (!game.quit) {
         var b: u8 = 0;
         _ = c.read(STDIN_FILENO, &b, 1);
-        control(&game, b);
+        try control(&game, b, w);
+        try buf.flush();
 
         var elapsed = timer.read();
 
-        if (elapsed >= 200 * 1000000) {
+        const norm_speed: u32 = 150;
+        const boost_speed: u32 = 100;
+
+        if (game.player.boost_left > 0) {
+            game.player.speed = boost_speed;
+        } else {
+            game.player.speed = norm_speed;
+        }
+
+        if (elapsed >= game.player.speed * 1000000) {
             if (!game.paused) {
+                append_shift_right(&game.player.tail, Point{ .x = game.player.pos.x, .y = game.player.pos.y });
+
                 switch (game.player.direction) {
-                    Dir.DIR_UP => game.player.pos.y -= 1,
-                    Dir.DIR_LEFT => game.player.pos.x -= 1,
-                    Dir.DIR_DOWN => game.player.pos.y += 1,
-                    Dir.DIR_RIGHT => game.player.pos.x += 1,
+                    d.DIR_UP => game.player.pos.y -= 1,
+                    d.DIR_LEFT => game.player.pos.x -= 1,
+                    d.DIR_DOWN => game.player.pos.y += 1,
+                    d.DIR_RIGHT => game.player.pos.x += 1,
                 }
                 game.player.last_direction = game.player.direction;
 
                 if (WRAP)
                     wrap(&game);
 
-                if (check_loss(game)) {
+                if (check_win(game)) {
                     game.quit = true;
-                    try stdout.print("gameover!\r\nyour score was {}\r\npress 'q' to quit\r\n", .{game.score});
-                } else if (check_win(game)) {
+                    try w.print("you won!\r\nyour score was {}\r\npress 'q' to quit\r\n", .{game.score});
+                } else if (check_loss(game)) {
                     game.quit = true;
-                    try stdout.print("you won!\r\nyour score was {}\r\npress 'q' to quit\r\n", .{game.score});
-                } else {
-                    append_shift_right(&game.player.tail, Point{ .x = game.player.pos.x, .y = game.player.pos.y });
-                    if (game.food) |food| {
-                        if (game.player.pos.x == food.x and game.player.pos.y == food.y) {
-                            game.score += 1;
-                            spawn_food(rand, &game);
-                        }
+                    try w.print("gameover!\r\nyour score was {}\r\npress 'q' to quit\r\n", .{game.score});
+                } else if (game.player.pos.x == game.food.?.x and game.player.pos.y == game.food.?.y) {
+                    spawn_food(rand, &game);
+                    game.score += 1;
+                } else if (game.boost) |boost| {
+                    if (game.player.pos.x == boost.x and game.player.pos.y == boost.y) {
+                        game.boost = null;
+                        game.player.boost_left = 30;
                     }
-
-                    try reset_cursor(stdout);
-                    try display(game, stdout);
-
-                    timer.reset();
                 }
-            } else {
-                    try reset_cursor(stdout);
-                    try display(game, stdout);
+            }
 
-                    timer.reset();
+            if (game.boost == null) {
+                if (rand.float(f32) <= 0.01) {
+                    spawn_boost(rand, &game);
+                }
+            }
+
+            if (game.player.boost_left > 0) {
+                game.player.boost_left -= 1;
+            }
+
+            if (!game.quit) {
+                try reset_cursor(w);
+                try display(game, w);
+                try buf.flush();
+
+                timer.reset();
             }
         }
+
+        // To prevent 100% cpu usage
+        std.time.sleep(1 * 1000000);
     }
+
+    try buf.flush();
 }
