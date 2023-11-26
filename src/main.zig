@@ -14,6 +14,10 @@ const GRID_WIDTH = 50;
 const GRID_HEIGHT = 20;
 const MAX_LENGTH = GRID_WIDTH * GRID_HEIGHT;
 const WRAP = true;
+const NORM_SPEED = 150;
+const BOOST_SPEED = 100;
+const BOOST_REPLENISH = 30;
+
 
 const d = enum { DIR_UP, DIR_DOWN, DIR_LEFT, DIR_RIGHT };
 
@@ -249,7 +253,7 @@ pub fn main() !void {
             .tail = [_]?Point{null} ** MAX_LENGTH,
             .direction = d.DIR_RIGHT,
             .last_direction = d.DIR_LEFT,
-            .speed = 150,
+            .speed = NORM_SPEED,
             .boost_left = 0,
         },
         .food = null,
@@ -284,13 +288,10 @@ pub fn main() !void {
 
         var elapsed = timer.read();
 
-        const norm_speed: u32 = 150;
-        const boost_speed: u32 = 100;
-
         if (game.player.boost_left > 0) {
-            game.player.speed = boost_speed;
+            game.player.speed = BOOST_SPEED;
         } else {
-            game.player.speed = norm_speed;
+            game.player.speed = NORM_SPEED;
         }
 
         if (elapsed >= game.player.speed * 1000000) {
@@ -320,7 +321,7 @@ pub fn main() !void {
                 } else if (game.boost) |boost| {
                     if (game.player.pos.x == boost.x and game.player.pos.y == boost.y) {
                         game.boost = null;
-                        game.player.boost_left = 30;
+                        game.player.boost_left = BOOST_REPLENISH;
                     }
                 }
             }
