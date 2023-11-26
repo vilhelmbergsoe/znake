@@ -52,9 +52,9 @@ fn enable_raw_mode() void {
     _ = c.tcgetattr(STDIN_FILENO, &orig_termios);
 
     var raw: c.termios = orig_termios;
-    raw.c_iflag &= ~@intCast(c_uint, (c.ICRNL | c.IXON));
-    raw.c_oflag &= ~@intCast(c_uint, (c.OPOST));
-    raw.c_lflag &= ~@intCast(c_uint, (c.ECHO | c.ICANON | c.IEXTEN | c.ISIG));
+    raw.c_iflag &= ~@as(c_uint, (c.ICRNL | c.IXON));
+    raw.c_oflag &= ~@as(c_uint, (c.OPOST));
+    raw.c_lflag &= ~@as(c_uint, (c.ECHO | c.ICANON | c.IEXTEN | c.ISIG));
 
     raw.c_cc[c.VMIN] = 0;
     raw.c_cc[c.VTIME] = 0;
