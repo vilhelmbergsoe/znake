@@ -103,7 +103,7 @@ fn display(game: Game, writer: anytype) !void {
     }
 }
 
-fn control(game: *Game, b: u8, d_writer: anytype) !void {
+fn control(game: *Game, b: u8, a: bool, d_writer: anytype) !void {
     switch (b) {
         'w' => {
             if (game.player.last_direction != d.DIR_DOWN)
@@ -121,9 +121,6 @@ fn control(game: *Game, b: u8, d_writer: anytype) !void {
             if (game.player.last_direction != d.DIR_LEFT)
                 game.player.direction = d.DIR_RIGHT;
         },
-        'u' => {
-            game.score += 1;
-        },
         'p' => {
             game.paused = !game.paused;
             try reset_cursor(d_writer);
@@ -131,6 +128,30 @@ fn control(game: *Game, b: u8, d_writer: anytype) !void {
         },
         'q' => {
             game.quit = true;
+        },
+        'A' => {
+            if (a == true) {
+                if (game.player.last_direction != d.DIR_DOWN)
+                    game.player.direction = d.DIR_UP;
+            }
+        },
+        'D' => {
+            if (a == true) {
+                if (game.player.last_direction != d.DIR_RIGHT)
+                    game.player.direction = d.DIR_LEFT;
+            }
+        },
+        'B' => {
+            if (a == true) {
+                if (game.player.last_direction != d.DIR_UP)
+                    game.player.direction = d.DIR_DOWN;
+            }
+        },
+        'C' => {
+            if (a == true) {
+                if (game.player.last_direction != d.DIR_LEFT)
+                    game.player.direction = d.DIR_RIGHT;
+            }
         },
         else => {},
     }
@@ -249,7 +270,16 @@ pub fn main() !void {
     while (!game.quit) {
         var b: u8 = 0;
         _ = c.read(STDIN_FILENO, &b, 1);
-        try control(&game, b, w);
+
+        // if start byte for arrow keys read up to identifier
+        var a: bool = false;
+        if (b == 27) {
+            _ = c.read(STDIN_FILENO, &b, 1);
+            _ = c.read(STDIN_FILENO, &b, 1);
+            a = true;
+        }
+
+        try control(&game, b, a, w);
         try buf.flush();
 
         var elapsed = timer.read();
