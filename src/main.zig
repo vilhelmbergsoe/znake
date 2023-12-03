@@ -18,7 +18,6 @@ const NORM_SPEED = 150;
 const BOOST_SPEED = 100;
 const BOOST_REPLENISH = 30;
 
-
 const d = enum { DIR_UP, DIR_DOWN, DIR_LEFT, DIR_RIGHT };
 
 const Point = struct {
@@ -97,10 +96,10 @@ fn display(game: Game, writer: anytype) !void {
                 if (boost.x == x and boost.y == y) {
                     try writer.print("\x1b[34mb\x1b[39m", .{});
                 } else {
-                    try writer.print(".", .{});
+                    try writer.print("·", .{});
                 }
             } else {
-                try writer.print(".", .{});
+                try writer.print("·", .{});
             }
         }
         try writer.print("\r\n", .{});
@@ -216,7 +215,7 @@ fn check_loss(game: Game) bool {
         return is_tail(game, game.player.pos.x, game.player.pos.y);
 
     return game.player.pos.x < 0 or game.player.pos.x > GRID_WIDTH - 1 or
-        game.player.pos.y < 0 or game.player.pos.y > GRID_WIDTH - 1 or
+        game.player.pos.y < 0 or game.player.pos.y > GRID_HEIGHT - 1 or
         is_tail(game, game.player.pos.x, game.player.pos.y);
 }
 
