@@ -10,11 +10,12 @@ const c = @cImport({
 
 const STDIN_FILENO = std.os.linux.STDIN_FILENO;
 
-const GRID_WIDTH = 50;
-const GRID_HEIGHT = 20;
+const GRID_WIDTH = 20;
+const GRID_HEIGHT = 10;
 const MAX_LENGTH = GRID_WIDTH * GRID_HEIGHT;
-const WRAP = true;
+const WRAP = false;
 const NORM_SPEED = 150;
+const BOOSTERS = false;
 const BOOST_SPEED = 100;
 const BOOST_REPLENISH = 30;
 
@@ -263,7 +264,9 @@ pub fn main() !void {
     };
 
     spawn_food(rand, &game);
-    spawn_boost(rand, &game);
+
+    if (BOOSTERS)
+        spawn_boost(rand, &game);
 
     try display(game, w);
     try buf.flush();
@@ -313,7 +316,7 @@ pub fn main() !void {
                     try w.print("you won!\r\nyour score was {}\r\npress 'q' to quit\r\n", .{game.score});
                 } else if (check_loss(game)) {
                     game.quit = true;
-                    try w.print("gameover!\r\nyour score was {}\r\npress 'q' to quit\r\n", .{game.score});
+                    try w.print("gameover!\r\nyour score was {}\r\n", .{game.score});
                 } else if (game.player.pos.x == game.food.?.x and game.player.pos.y == game.food.?.y) {
                     spawn_food(rand, &game);
                     game.score += 1;
@@ -326,8 +329,10 @@ pub fn main() !void {
             }
 
             if (game.boost == null) {
-                if (rand.float(f32) <= 0.01) {
-                    spawn_boost(rand, &game);
+                if (BOOSTERS) {
+                    if (rand.float(f32) <= 0.01) {
+                        spawn_boost(rand, &game);
+                    }
                 }
             }
 
