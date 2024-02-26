@@ -43,6 +43,7 @@ const Game = struct {
 
     score: u32,
     paused: bool,
+    loss: bool,
     quit: bool,
 };
 
@@ -107,63 +108,137 @@ fn display(game: Game, writer: anytype) !void {
     }
 }
 
-fn control(game: *Game, b: u8, a: bool, d_writer: anytype) !void {
+fn control(game: *Game, b: u8, a: bool, buf: anytype, w: anytype) !void {
     switch (b) {
         'w' => {
+            if (game.paused)
+                game.paused = false;
+
             if (game.player.last_direction != d.DIR_DOWN)
                 game.player.direction = d.DIR_UP;
         },
         'a' => {
+            if (game.paused)
+                game.paused = false;
+
             if (game.player.last_direction != d.DIR_RIGHT)
                 game.player.direction = d.DIR_LEFT;
         },
         's' => {
+            if (game.paused)
+                game.paused = false;
+
             if (game.player.last_direction != d.DIR_UP)
                 game.player.direction = d.DIR_DOWN;
         },
         'd' => {
+            if (game.paused)
+                game.paused = false;
+
             if (game.player.last_direction != d.DIR_LEFT)
                 game.player.direction = d.DIR_RIGHT;
         },
         'p' => {
             game.paused = !game.paused;
-            try reset_cursor(d_writer);
-            try display(game.*, d_writer);
+            try reset_cursor(w);
+            try display(game.*, w);
         },
         'q' => {
             game.quit = true;
         },
         'A' => {
             if (a == true) {
+                if (game.paused)
+                    game.paused = false;
+
                 if (game.player.last_direction != d.DIR_DOWN)
                     game.player.direction = d.DIR_UP;
             }
         },
         'D' => {
             if (a == true) {
+                if (game.paused)
+                    game.paused = false;
+
                 if (game.player.last_direction != d.DIR_RIGHT)
                     game.player.direction = d.DIR_LEFT;
             }
         },
         'B' => {
             if (a == true) {
+                if (game.paused)
+                    game.paused = false;
+
                 if (game.player.last_direction != d.DIR_UP)
                     game.player.direction = d.DIR_DOWN;
             }
         },
         'C' => {
             if (a == true) {
+                if (game.paused)
+                    game.paused = false;
+
                 if (game.player.last_direction != d.DIR_LEFT)
                     game.player.direction = d.DIR_RIGHT;
             }
         },
-        else => {},
+        'y' => {
+            var prng = std.rand.DefaultPrng.init(blk: {
+                var seed: u64 = undefined;
+                try std.os.getrandom(std.mem.asBytes(&seed));
+                break :blk seed;
+            });
+            const rand = prng.random();
+
+            if (game.loss) {
+                game.loss = false;
+                game.quit = false;
+                game.score = 0;
+                game.player.pos = Point{
+                    .x = GRID_WIDTH / 2,
+                    .y = GRID_HEIGHT / 2,
+                };
+                game.player.direction = d.DIR_RIGHT;
+                game.player.last_direction = d.DIR_RIGHT;
+                game.player.tail = undefined;
+                game.food = undefined;
+                game.boost = undefined;
+                game.paused = true;
+            }
+
+            spawn_food(rand, &game.*);
+
+            try w.print("\x1B[{}A\x1B[{}D", .{ 3, GRID_WIDTH });
+            try w.print("\x1B[J", .{});
+            // what exactly does the above do?
+            // it clears the screen from the current position to the end of the screen
+        },
+        'n' => {
+            if (game.loss) {
+                game.quit = true;
+            }
+        },
+        // invalid input
+        else => {
+            if (game.loss) {
+                try w.print("\x1B[{}A\x1B[{}D", .{ 2, GRID_WIDTH });
+                try w.print("\x1B[J", .{});
+                try buf.flush();
+
+                std.time.sleep(100000000);
+
+                try w.print("please input either 'y' or 'n'\r\n", .{});
+                try w.print("do you want to retry? (y/n)\r\n", .{});
+            }
+        },
+        // no input
+        0 => {},
     }
 }
 
 fn spawn_food(rand: std.rand.Random, game: *Game) void {
-    var x: i32 = rand.intRangeLessThan(i32, 0, GRID_WIDTH);
-    var y: i32 = rand.intRangeLessThan(i32, 0, GRID_HEIGHT);
+    const x: i32 = rand.intRangeLessThan(i32, 0, GRID_WIDTH);
+    const y: i32 = rand.intRangeLessThan(i32, 0, GRID_HEIGHT);
 
     if (!is_tail(game.*, x, y) and (game.player.pos.x != x and game.player.pos.y != y)) {
         game.food = Point{
@@ -176,8 +251,8 @@ fn spawn_food(rand: std.rand.Random, game: *Game) void {
 }
 
 fn spawn_boost(rand: std.rand.Random, game: *Game) void {
-    var x: i32 = rand.intRangeLessThan(i32, 0, GRID_WIDTH);
-    var y: i32 = rand.intRangeLessThan(i32, 0, GRID_HEIGHT);
+    const x: i32 = rand.intRangeLessThan(i32, 0, GRID_WIDTH);
+    const y: i32 = rand.intRangeLessThan(i32, 0, GRID_HEIGHT);
 
     if (!is_tail(game.*, x, y) and (game.player.pos.x != x and game.player.pos.y != y)) {
         game.boost = Point{
@@ -260,6 +335,7 @@ pub fn main() !void {
         .boost = null,
         .score = 0,
         .paused = true,
+        .loss = false,
         .quit = false,
     };
 
@@ -285,10 +361,10 @@ pub fn main() !void {
             a = true;
         }
 
-        try control(&game, b, a, w);
+        try control(&game, b, a, &buf, w);
         try buf.flush();
 
-        var elapsed = timer.read();
+        const elapsed = timer.read();
 
         if (game.player.boost_left > 0) {
             game.player.speed = BOOST_SPEED;
@@ -297,7 +373,7 @@ pub fn main() !void {
         }
 
         if (elapsed >= game.player.speed * 1000000) {
-            if (!game.paused) {
+            if (!game.paused and !game.loss) {
                 append_shift_right(&game.player.tail, Point{ .x = game.player.pos.x, .y = game.player.pos.y });
 
                 switch (game.player.direction) {
@@ -315,8 +391,10 @@ pub fn main() !void {
                     game.quit = true;
                     try w.print("you won!\r\nyour score was {}\r\npress 'q' to quit\r\n", .{game.score});
                 } else if (check_loss(game)) {
-                    game.quit = true;
                     try w.print("gameover!\r\nyour score was {}\r\n", .{game.score});
+                    try w.print("do you want to retry? (y/n)\r\n", .{});
+
+                    game.loss = true;
                 } else if (game.player.pos.x == game.food.?.x and game.player.pos.y == game.food.?.y) {
                     spawn_food(rand, &game);
                     game.score += 1;
@@ -328,8 +406,8 @@ pub fn main() !void {
                 }
             }
 
-            if (game.boost == null) {
-                if (BOOSTERS) {
+            if (BOOSTERS) {
+                if (game.boost == null) {
                     if (rand.float(f32) <= 0.01) {
                         spawn_boost(rand, &game);
                     }
@@ -340,7 +418,7 @@ pub fn main() !void {
                 game.player.boost_left -= 1;
             }
 
-            if (!game.quit) {
+            if (!game.quit and !game.loss) {
                 try reset_cursor(w);
                 try display(game, w);
                 try buf.flush();
