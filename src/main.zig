@@ -139,9 +139,11 @@ fn control(game: *Game, b: u8, a: bool, buf: anytype, w: anytype) !void {
                 game.player.direction = d.DIR_RIGHT;
         },
         'p' => {
-            game.paused = !game.paused;
-            try reset_cursor(w);
-            try display(game.*, w);
+            if (!game.loss) {
+                game.paused = !game.paused;
+                try reset_cursor(w);
+                try display(game.*, w);
+            }
         },
         'q' => {
             game.quit = true;
@@ -199,7 +201,7 @@ fn control(game: *Game, b: u8, a: bool, buf: anytype, w: anytype) !void {
                     .y = GRID_HEIGHT / 2,
                 };
                 game.player.direction = d.DIR_RIGHT;
-                game.player.last_direction = d.DIR_RIGHT;
+                game.player.last_direction = undefined;
                 game.player.tail = undefined;
                 game.food = undefined;
                 game.boost = undefined;
